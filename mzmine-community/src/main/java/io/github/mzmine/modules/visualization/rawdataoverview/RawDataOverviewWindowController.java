@@ -112,6 +112,8 @@ public class RawDataOverviewWindowController {
   private int minimumLabelFmf = 0;
   private int minimumLabelRmf = 0;
   private int nistLabelFontSize = 13;
+  /** How far a feature row may sit from a clicked peak and still receive its NIST hits. */
+  private static final double EXPLICIT_SEARCH_RT_TOLERANCE = 0.15d;
   private Label nistLabelFilterStatus;
   private CheckMenuItem showNistLabelsMenuItem;
   private CheckBox showNistLabelsCheckBox;
@@ -188,13 +190,12 @@ public class RawDataOverviewWindowController {
 
     final Scan scan = rawDataFile.binarySearchClosestScan((float) requestedRetentionTime, 1);
     final NistRowTarget target = findClosestFeatureRow(rawDataFile, requestedRetentionTime);
-    if (scan == null || target == null || target.distanceMinutes() > 0.15d) {
+    if (scan == null || target == null || target.distanceMinutes() > EXPLICIT_SEARCH_RT_TOLERANCE) {
       logger.warning(() -> "Explicit NIST request rejected at RT %.3f: closest feature distance=%s"
           .formatted(requestedRetentionTime,
               target == null ? "none" : "%.4f min".formatted(target.distanceMinutes())));
       MZmineCore.getDesktop().displayErrorMessage(
-          "No processed feature row was found within 0.15 min of RT %.3f. The explicit search needs a feature row to store its NIST candidates."
-              .formatted(requestedRetentionTime));
+          explainMissingFeatureRow(rawDataFile, requestedRetentionTime, target));
       return;
     }
 
@@ -241,22 +242,75 @@ public class RawDataOverviewWindowController {
     explicitSearchThread.start();
   }
 
+  /**
+   * Explains why a clicked peak has no feature row to attach hits to.
+   *
+   * <p>The three reasons are very different to act on - no feature lists at all, none covering this
+   * file, or one that is simply too far away - so they get different messages. A single "nothing
+   * within 0.15 min" reads as a tolerance problem even when the real answer is that feature
+   * detection has not been run.</p>
+   */
+  private String explainMissingFeatureRow(RawDataFile rawDataFile, double retentionTime,
+      @Nullable NistRowTarget closest) {
+    final var featureLists = ProjectService.getProjectManager().getCurrentProject()
+        .getCurrentFeatureLists();
+    if (featureLists.isEmpty()) {
+      return """
+          There are no feature lists in this project, so there is nowhere to store NIST hits.
+
+          Run feature detection first. For GC-EI data that usually means mass detection, then           chromatogram building, then deconvolution. You can then right-click a peak again.""";
+    }
+    if (closest == null) {
+      return ("The %d feature list(s) in this project contain no rows with a retention time, so "
+          + "there is nowhere to store NIST hits for this peak.%n%n"
+          + "Run feature detection on %s, then right-click the peak again.").formatted(
+          featureLists.size(), rawDataFile.getName());
+    }
+    return ("The nearest feature row for %s is %.3f min away from the clicked peak at RT %.3f, "
+        + "which is outside the %.2f min limit for attaching NIST hits.%n%n"
+        + "This usually means the peak was not picked up by feature detection. Either rerun "
+        + "detection so this peak becomes a feature, or run the NIST module over the whole feature "
+        + "list instead.").formatted(rawDataFile.getName(), closest.distanceMinutes(),
+        retentionTime, EXPLICIT_SEARCH_RT_TOLERANCE);
+  }
+
+  /**
+   * Finds the feature row closest to a clicked peak.
+   *
+   * <p>A row's retention time for this file is preferred, but a row that carries no feature for it
+   * still counts, using the row average. Requiring a per-file feature made the search fail on
+   * aligned feature lists, and whenever the list referenced a different {@link RawDataFile}
+   * instance than the one on screen - which happens when data is re-imported. In both cases the row
+   * is a perfectly good place to store hits, and refusing it left users staring at an obvious peak
+   * being told nothing was found.</p>
+   */
   private NistRowTarget findClosestFeatureRow(RawDataFile rawDataFile, double retentionTime) {
     NistRowTarget closest = null;
     for (FeatureList featureList : ProjectService.getProjectManager().getCurrentProject()
         .getCurrentFeatureLists()) {
       for (FeatureListRow row : featureList.getRows()) {
-        final var feature = row.getFeature(rawDataFile);
-        if (feature == null || feature.getRT() == null) {
+        final Double rowRt = featureRetentionTime(row, rawDataFile);
+        if (rowRt == null) {
           continue;
         }
-        final double distance = Math.abs(feature.getRT() - retentionTime);
+        final double distance = Math.abs(rowRt - retentionTime);
         if (closest == null || distance < closest.distanceMinutes()) {
           closest = new NistRowTarget(featureList, row, distance);
         }
       }
     }
     return closest;
+  }
+
+  /** This file's retention time for the row, falling back to the row average. */
+  private static @Nullable Double featureRetentionTime(FeatureListRow row,
+      RawDataFile rawDataFile) {
+    final var feature = row.getFeature(rawDataFile);
+    if (feature != null && feature.getRT() != null) {
+      return feature.getRT().doubleValue();
+    }
+    final Float averageRt = row.getAverageRT();
+    return averageRt == null ? null : averageRt.doubleValue();
   }
 
   private void installNistMatchLabelToggle() {
