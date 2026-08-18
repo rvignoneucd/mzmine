@@ -394,7 +394,9 @@ public class MainWindowController {
     logger.fine("Setting active workspace to " + workspace.getName());
     activeWorkspace = workspace;
     // rebuild the menu here, needed for updates after user changes
-    mainPane.setTop(workspace.buildMainMenu(tags));
+    // The workspace builds the menu bar in code, so local tools are injected afterwards rather
+    // than declared in MainMenu.fxml, which this application never loads. See LabToolsMenu.
+    mainPane.setTop(LabToolsMenu.addTo(workspace.buildMainMenu(tags)));
   }
 
   public Workspace getActiveWorkspace() {

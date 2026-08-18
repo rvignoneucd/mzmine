@@ -582,9 +582,6 @@
   </Menu>
 
   <!-- TOOLS -->
-  <!-- Lab-specific tools live in their own file so local additions stay out of this one. -->
-  <fx:include source="LabToolsMenu.fxml"/>
-
   <Menu text="Tools">
     <MenuItem onAction="#openQuickSearch" text="Quick search">
       <accelerator>
