@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  ~ Copyright (c) 2004-2026 The mzmine Development Team
+  ~ SPDX-License-Identifier: MIT
+  -->
+
+<!--
+  Lab-specific tools for this build of mzmine.
+
+  This file exists so that local additions do not have to be scattered through MainMenu.fxml.
+  MainMenu.fxml includes it with a single line, so adding, renaming or removing a tool here never
+  touches a file that upstream mzmine also edits. Keeping the footprint in shared files at one line
+  is what keeps merges with upstream cheap.
+
+  To add a tool: add a MenuItem whose userData is the fully qualified module class name. The
+  runModule handler resolves the class and opens its setup dialog, exactly as the main menu does.
+  -->
+
+<?import javafx.scene.control.Menu?>
+<?import javafx.scene.control.MenuItem?>
+<Menu xmlns="http://javafx.com/javafx" xmlns:fx="http://javafx.com/fxml/1"
+  fx:controller="io.github.mzmine.gui.mainwindow.LabToolsMenuController"
+  text="Lab tools">
+
+  <MenuItem text="NIST MSPepSearch (headless EI)" onAction="#runModule"
+    userData="io.github.mzmine.modules.dataprocessing.id_nist.NistMsSearchModule"/>
+
+</Menu>
