@@ -188,58 +188,87 @@ public class RawDataOverviewWindowController {
     logger.info(() -> "Explicit NIST click snapped to local peak apex: clicked RT=%.3f, apex RT=%.3f"
         .formatted(initialRetentionTime, requestedRetentionTime));
 
-    final Scan scan = rawDataFile.binarySearchClosestScan((float) requestedRetentionTime, 1);
-    final NistRowTarget target = findClosestFeatureRow(rawDataFile, requestedRetentionTime);
-    if (scan == null || target == null || target.distanceMinutes() > EXPLICIT_SEARCH_RT_TOLERANCE) {
-      logger.warning(() -> "Explicit NIST request rejected at RT %.3f: closest feature distance=%s"
-          .formatted(requestedRetentionTime,
-              target == null ? "none" : "%.4f min".formatted(target.distanceMinutes())));
+    // A clicked peak is a question about a retention time, so every loaded file is searched at
+    // that time, and a row is created for any file that has none there.
+    final List<ClickedPeakNistTargets.Target> targets = ClickedPeakNistTargets.resolve(
+        requestedRetentionTime, EXPLICIT_SEARCH_RT_TOLERANCE);
+    if (targets.isEmpty()) {
+      logger.warning(() -> "Explicit NIST request found nowhere to store hits at RT %.3f"
+          .formatted(requestedRetentionTime));
       MZmineCore.getDesktop().displayErrorMessage(
-          explainMissingFeatureRow(rawDataFile, requestedRetentionTime, target));
+          explainMissingFeatureRow(rawDataFile, requestedRetentionTime));
       return;
     }
 
     final ParameterSet parameters = MZmineCore.getConfiguration()
         .getModuleParameters(NistMsSearchModule.class).cloneParameterSet();
     final List<String> errors = new ArrayList<>();
-    // The row and its list are already resolved above; only validate settings needed to execute
-    // this one search. Generic batch validation must not demand another feature-list selection.
+    // Rows and lists are already resolved; only validate settings needed to execute the searches.
+    // Generic batch validation must not demand another feature-list selection.
     if (!((NistMsSearchParameters) parameters).checkParameterValuesForExplicitSearch(errors)) {
       MZmineCore.getDesktop().displayErrorMessage(
           "NIST search settings are invalid:\n" + String.join("\n", errors));
       return;
     }
 
-    final NistMsSearchTask task = new NistMsSearchTask(target.row(), target.featureList(),
-        parameters, Instant.now(), scan);
-    logger.info(() -> "Starting explicit NIST search: file=%s, scan=%d, RT=%.3f, feature list=%s, minimum FMF=%d"
-        .formatted(rawDataFile.getName(), scan.getScanNumber(), scan.getRetentionTime(),
-            target.featureList().getName(), task.getMinimumMatchFactor()));
+    final long createdRows = targets.stream().filter(ClickedPeakNistTargets.Target::created).count();
+    logger.info(() -> "Starting explicit NIST search at RT %.3f across %d file(s), %d row(s) created"
+        .formatted(requestedRetentionTime, targets.size(), createdRows));
     MZmineCore.getDesktop().setStatusBarText(
-        "Queued explicit NIST search at RT %.3f min (minimum FMF %d)"
-            .formatted(scan.getRetentionTime(), task.getMinimumMatchFactor()));
-    task.addTaskStatusListener((changedTask, newStatus, oldStatus) -> {
-      if (newStatus == TaskStatus.FINISHED) {
-        javafx.application.Platform.runLater(() -> {
+        "Queued NIST search at RT %.3f min across %d file(s)".formatted(requestedRetentionTime,
+            targets.size()));
+
+    final java.util.concurrent.atomic.AtomicInteger remaining =
+        new java.util.concurrent.atomic.AtomicInteger(targets.size());
+    final java.util.concurrent.atomic.AtomicInteger totalHits =
+        new java.util.concurrent.atomic.AtomicInteger();
+    final List<String> failures = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    for (ClickedPeakNistTargets.Target target : targets) {
+      final NistMsSearchTask task = new NistMsSearchTask(target.row(), target.featureList(),
+          parameters, Instant.now(), target.scan());
+      task.addTaskStatusListener((changedTask, newStatus, oldStatus) -> {
+        if (newStatus != TaskStatus.FINISHED && newStatus != TaskStatus.ERROR) {
+          return;
+        }
+        if (newStatus == TaskStatus.ERROR) {
+          failures.add(target.file().getName() + ": " + changedTask.getErrorMessage());
+        } else {
+          totalHits.addAndGet(task.getAddedHitCount());
+        }
+        if (remaining.decrementAndGet() > 0) {
+          return;
+        }
+        // Report once, after every file has finished, rather than one dialog per file.
+        final int hits = totalHits.get();
+        Platform.runLater(() -> {
           refreshNistMatchLabels(rawDataFile, true);
-          NistMatchesTab.selectMatchAt(rawDataFile, scan.getRetentionTime());
+          NistMatchesTab.selectMatchAt(rawDataFile, (float) requestedRetentionTime);
           NistMatchesTab.refresh();
-          final String result = task.getAddedHitCount() == 0
-              ? "No candidates passed the minimum FMF of %d at RT %.3f min."
-                  .formatted(task.getMinimumMatchFactor(), scan.getRetentionTime())
-              : "Stored %d candidates at RT %.3f min. Check the NIST matches dropdown."
-                  .formatted(task.getAddedHitCount(), scan.getRetentionTime());
-          MZmineCore.getDesktop().displayMessage("NIST search complete", result);
+          final StringBuilder message = new StringBuilder();
+          message.append(hits == 0
+              ? "No candidates passed the minimum match factor at RT %.3f min.".formatted(
+              requestedRetentionTime)
+              : "Stored %d candidate(s) at RT %.3f min across %d file(s).".formatted(hits,
+                  requestedRetentionTime, targets.size()));
+          if (createdRows > 0) {
+            message.append(String.format(
+                "%n%nCreated %d feature row(s) for files that had none at this time.",
+                createdRows));
+          }
+          if (!failures.isEmpty()) {
+            message.append(String.format("%n%nFailed for:%n"))
+                .append(String.join(System.lineSeparator(), failures));
+          }
+          MZmineCore.getDesktop().displayMessage("NIST search complete", message.toString());
         });
-      } else if (newStatus == TaskStatus.ERROR) {
-        javafx.application.Platform.runLater(() -> MZmineCore.getDesktop().displayErrorMessage(
-            "NIST search failed: " + changedTask.getErrorMessage()));
-      }
-    });
-    final Thread explicitSearchThread = new Thread(task,
-        "Explicit NIST search %.3f".formatted(scan.getRetentionTime()));
-    explicitSearchThread.setDaemon(true);
-    explicitSearchThread.start();
+      });
+      final Thread searchThread = new Thread(task,
+          "Explicit NIST search %.3f %s".formatted(requestedRetentionTime,
+              target.file().getName()));
+      searchThread.setDaemon(true);
+      searchThread.start();
+    }
   }
 
   /**
@@ -250,8 +279,7 @@ public class RawDataOverviewWindowController {
    * within 0.15 min" reads as a tolerance problem even when the real answer is that feature
    * detection has not been run.</p>
    */
-  private String explainMissingFeatureRow(RawDataFile rawDataFile, double retentionTime,
-      @Nullable NistRowTarget closest) {
+  private String explainMissingFeatureRow(RawDataFile rawDataFile, double retentionTime) {
     final var featureLists = ProjectService.getProjectManager().getCurrentProject()
         .getCurrentFeatureLists();
     if (featureLists.isEmpty()) {
@@ -260,18 +288,9 @@ public class RawDataOverviewWindowController {
 
           Run feature detection first. For GC-EI data that usually means mass detection, then           chromatogram building, then deconvolution. You can then right-click a peak again.""";
     }
-    if (closest == null) {
-      return ("The %d feature list(s) in this project contain no rows with a retention time, so "
-          + "there is nowhere to store NIST hits for this peak.%n%n"
-          + "Run feature detection on %s, then right-click the peak again.").formatted(
-          featureLists.size(), rawDataFile.getName());
-    }
-    return ("The nearest feature row for %s is %.3f min away from the clicked peak at RT %.3f, "
-        + "which is outside the %.2f min limit for attaching NIST hits.%n%n"
-        + "This usually means the peak was not picked up by feature detection. Either rerun "
-        + "detection so this peak becomes a feature, or run the NIST module over the whole feature "
-        + "list instead.").formatted(rawDataFile.getName(), closest.distanceMinutes(),
-        retentionTime, EXPLICIT_SEARCH_RT_TOLERANCE);
+    return ("No loaded raw file has a scan near RT %.3f, so there is nothing to search.%n%n"
+        + "This usually means the chromatogram on screen covers a different time range than the "
+        + "loaded data for %s.").formatted(retentionTime, rawDataFile.getName());
   }
 
   /**
