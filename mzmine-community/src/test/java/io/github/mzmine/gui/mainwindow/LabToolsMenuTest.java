@@ -4,6 +4,7 @@
  */
 package io.github.mzmine.gui.mainwindow;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -52,6 +53,33 @@ class LabToolsMenuTest {
       assertTrue(item.getOnAction() != null,
           "menu item '" + item.getText() + "' has no action handler");
     }
+  }
+
+  @Test
+  void nistMatchesTabBuildsStandaloneAndRegistersItself() throws Exception {
+    // The tab used to be declared in MainWindow.fxml. It is now constructed in code, so this
+    // guards that it builds without the main window and exposes itself to MZmineGUI.
+    FxThread.initJavaFx();
+    final AtomicReference<Throwable> failure = new AtomicReference<>();
+    final AtomicReference<NistMatchesTab> built = new AtomicReference<>();
+    FxThread.runOnFxThreadAndWait(() -> {
+      try {
+        built.set(new NistMatchesTab());
+      } catch (Throwable error) {
+        failure.set(error);
+      }
+    });
+    if (failure.get() != null) {
+      throw new AssertionError("NistMatchesTab failed to build", failure.get());
+    }
+
+    final NistMatchesTab tab = built.get();
+    assertNotNull(tab, "the tab should have been constructed");
+    assertEquals("NIST matches", tab.getText());
+    assertFalse(tab.isClosable(), "the tab should not be closable");
+    assertNotNull(tab.getContent(), "the tab should have content");
+    assertEquals(tab, NistMatchesTab.getInstance(),
+        "the tab should register itself so MZmineGUI can reach it");
   }
 
   private static MenuBar loadMainMenu() throws Exception {

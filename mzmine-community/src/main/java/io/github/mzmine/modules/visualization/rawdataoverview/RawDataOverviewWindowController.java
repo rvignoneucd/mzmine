@@ -29,7 +29,7 @@ import io.github.mzmine.datamodel.RawDataFile;
 import io.github.mzmine.datamodel.Scan;
 import io.github.mzmine.datamodel.features.FeatureList;
 import io.github.mzmine.datamodel.features.FeatureListRow;
-import io.github.mzmine.gui.MZmineGUI;
+import io.github.mzmine.gui.mainwindow.NistMatchesTab;
 import io.github.mzmine.gui.chartbasics.ChartLogicsFX;
 import io.github.mzmine.gui.chartbasics.graphicsexport.GraphicsExportModule;
 import io.github.mzmine.gui.chartbasics.graphicsexport.GraphicsExportParameters;
@@ -221,8 +221,8 @@ public class RawDataOverviewWindowController {
       if (newStatus == TaskStatus.FINISHED) {
         javafx.application.Platform.runLater(() -> {
           refreshNistMatchLabels(rawDataFile, true);
-          MZmineGUI.setNistMatchSelection(rawDataFile, scan.getRetentionTime());
-          MZmineGUI.refreshNistMatches();
+          NistMatchesTab.selectMatchAt(rawDataFile, scan.getRetentionTime());
+          NistMatchesTab.refresh();
           final String result = task.getAddedHitCount() == 0
               ? "No candidates passed the minimum FMF of %d at RT %.3f min."
                   .formatted(task.getMinimumMatchFactor(), scan.getRetentionTime())
@@ -282,7 +282,7 @@ public class RawDataOverviewWindowController {
         selectedChromatogramRawFile = currentPosition.getDataFile();
         selectedChromatogramRt = currentPosition.getRetentionTime();
         nistLabelRawFile = selectedChromatogramRawFile;
-        MZmineGUI.setNistMatchSelection(selectedChromatogramRawFile, selectedChromatogramRt);
+        NistMatchesTab.selectMatchAt(selectedChromatogramRawFile, selectedChromatogramRt);
       } else if (nistLabelRawFile == null) {
         // Raw Data Overview may already show a file before the user has clicked a scan. Resolve
         // that visible file now so enabling labels does not depend on a later selection event.
@@ -719,7 +719,7 @@ public class RawDataOverviewWindowController {
       }
       selectedChromatogramRt = pos.getRetentionTime();
       selectedChromatogramRawFile = selectedRawDataFile;
-      MZmineGUI.setNistMatchSelection(selectedRawDataFile, selectedChromatogramRt);
+      NistMatchesTab.selectMatchAt(selectedRawDataFile, selectedChromatogramRt);
       refreshNistMatchLabels(selectedRawDataFile, false);
       highlightNistMatch(selectedChromatogramRt);
       RawDataFileInfoPaneController con = rawDataFilesAndControllers.get(selectedRawDataFile);
