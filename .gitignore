@@ -51,3 +51,8 @@ CLAUDE.md
 # See external_tools/nist_mspepsearch/README.txt for setup instructions.
 external_tools/nist_mspepsearch/*
 !external_tools/nist_mspepsearch/README.txt
+
+# rainbow is installed by the user, not distributed with mzmine.
+external_tools/chemstation_rainbow/*
+!external_tools/chemstation_rainbow/read_chemstation.py
+!external_tools/chemstation_rainbow/README.txt

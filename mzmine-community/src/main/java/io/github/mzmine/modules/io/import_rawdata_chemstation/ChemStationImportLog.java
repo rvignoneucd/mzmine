@@ -49,11 +49,6 @@ public final class ChemStationImportLog {
     final StringBuilder entry = new StringBuilder("ChemStation import event=").append(event);
     if (source != null) {
       entry.append(" source=\"").append(source.getAbsolutePath()).append('"');
-      final File dataFile = source.isFile() ? source : ChemStationMsParser.findDataMsFile(source);
-      if (dataFile != null) {
-        entry.append(" data_ms=\"").append(dataFile.getAbsolutePath()).append('"').append(" bytes=")
-            .append(dataFile.length()).append(" modified_ms=").append(dataFile.lastModified());
-      }
     }
     if (details != null && !details.isBlank()) {
       entry.append(" details=\"").append(oneLine(details)).append('"');

@@ -179,8 +179,7 @@ public class AllSpectralDataImportModule implements MZmineProcessingModule {
     final File parent = f.getParentFile();
     if (parent == null || !parent.getName().toLowerCase().endsWith(BRUKER_FOLDER_SUFFIX)) {
       return f;
-    } else if (RawDataFileTypeDetector.isNamedChemStationMsFile(f)
-        || RawDataFileTypeDetector.isChemStationMsFile(f)) {
+    } else if (RawDataFileTypeDetector.isNamedChemStationMsFile(f)) {
       // Users naturally select DATA.MS in the file chooser. Normalize it to its .D dataset folder
       // so multiple runs do not all collide under the display name DATA.MS.
       return parent;

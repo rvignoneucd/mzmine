@@ -35,7 +35,7 @@ import io.github.mzmine.datamodel.impl.masslist.ScanPointerMassList;
 import io.github.mzmine.modules.MZmineModule;
 import io.github.mzmine.modules.io.import_rawdata_all.spectral_processor.ScanImportProcessorConfig;
 import io.github.mzmine.modules.io.import_rawdata_all.spectral_processor.SimpleSpectralArrays;
-import io.github.mzmine.modules.io.import_rawdata_chemstation.ChemStationMsParser.ChemStationScan;
+import io.github.mzmine.modules.io.import_rawdata_chemstation.ChemStationRainbowParser.ChemStationScan;
 import io.github.mzmine.parameters.ParameterSet;
 import io.github.mzmine.project.impl.RawDataFileImpl;
 import io.github.mzmine.taskcontrol.AbstractTask;
@@ -94,7 +94,7 @@ public final class ChemStationImportTask extends AbstractTask implements RawData
     ChemStationImportLog.write("IMPORT_START", folder,
         "processor=" + scanProcessorConfig);
 
-    try (ChemStationMsParser parser = new ChemStationMsParser(folder)) {
+    try (ChemStationRainbowParser parser = new ChemStationRainbowParser(folder)) {
       ChemStationImportLog.write("PARSER_OPENED", folder,
           "declared_scans=" + parser.getTotalScans());
       ChemStationScan sourceScan;

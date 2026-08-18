@@ -100,13 +100,11 @@ public class RawDataFileTypeDetector {
         return null;
       }
       // Legacy Agilent ChemStation GC-MS stores spectra in a root-level DATA.MS file. Detect this
-      // before the other .d layouts so ChemStation folders use the native reader rather than
-      // MSConvert, which targets the newer AcqData layout. Only the conventional DATA.MS name is
-      // decisive here: the header probe in isChemStationMsFile is deliberately permissive (it
-      // accepts any .ms file with a zero pointer at 0x10A) and an unrelated .ms file sitting
-      // beside a modern AcqData tree must not divert the whole folder to the legacy parser.
-      // A ChemStation folder that uses a non-standard payload name is still recognized below,
-      // after the newer vendor layouts have been ruled out.
+      // before the other .d layouts so ChemStation folders use the ChemStation reader rather than
+      // MSConvert, which targets the newer AcqData layout. Recognition is by the conventional
+      // DATA.MS name alone: whether the payload is really readable is decided by the reader, which
+      // hands the file to rainbow. Probing the binary header here would mean reproducing rainbow's
+      // format knowledge in mzmine, which is exactly what the external reader avoids.
       for (File f : directoryEntries) {
         if (isNamedChemStationMsFile(f)) {
           return RawDataFileType.AGILENT_CHEMSTATION_D;
@@ -140,14 +138,6 @@ public class RawDataFileTypeDetector {
           return RawDataFileType.AGILENT_D;
         }
       }
-      // No newer vendor layout matched. A ChemStation dataset whose payload was renamed from
-      // DATA.MS is still importable, so fall back to the header probe now that it can no longer
-      // shadow an AcqData, Bruker or Waters folder.
-      for (File f : directoryEntries) {
-        if (isChemStationMsFile(f)) {
-          return RawDataFileType.AGILENT_CHEMSTATION_D;
-        }
-      }
       // We don't recognize any other directory type than the vendor layouts above.
       return null;
     }
@@ -179,8 +169,7 @@ public class RawDataFileTypeDetector {
         }
         return null;
       }
-      if (lowerName.endsWith(".ms")
-          && (isNamedChemStationMsFile(fileName) || isChemStationMsFile(fileName))) {
+      if (isNamedChemStationMsFile(fileName)) {
         return RawDataFileType.AGILENT_CHEMSTATION_D;
       }
       //the suffix is json and have a .aird file with same name
@@ -282,25 +271,6 @@ public class RawDataFileTypeDetector {
         && file.getName().equalsIgnoreCase(CHEMSTATION_MS_FILE);
   }
 
-  /** Returns true for a readable legacy ChemStation MS spectral file. */
-  public static boolean isChemStationMsFile(@Nullable File file) {
-    if (file == null || !file.isFile() || !file.getName().toLowerCase().endsWith(".ms")) {
-      return false;
-    }
-    try (var input = new java.io.RandomAccessFile(file, "r")) {
-      if (input.length() < 0x10C) {
-        return false;
-      }
-      final int header = input.readInt();
-      if (header == 0x01320000) {
-        return true;
-      }
-      input.seek(0x10A);
-      return input.readUnsignedShort() == 0;
-    } catch (IOException ignored) {
-      return false;
-    }
-  }
 
   /**
    * Currently not used because the import task takes care of everything. Only here as reference
