@@ -162,6 +162,10 @@ public class RawDataOverviewWindowController {
     final MenuItem explicitSearch = new MenuItem("Run NIST search at clicked peak apex");
     explicitSearch.setOnAction(event -> runNistSearchAtContextRetentionTime());
     visualizer.getChromPlot().getContextMenu().getItems().add(explicitSearch);
+
+    final MenuItem explainDetection = new MenuItem("Why was this peak not detected?");
+    explainDetection.setOnAction(event -> explainDetectionAtContextRetentionTime());
+    visualizer.getChromPlot().getContextMenu().getItems().add(explainDetection);
   }
 
   private void runNistSearchAtContextRetentionTime() {
@@ -303,6 +307,87 @@ public class RawDataOverviewWindowController {
    * is a perfectly good place to store hits, and refusing it left users staring at an obvious peak
    * being told nothing was found.</p>
    */
+  /** Reports which detection setting excluded the clicked peak, without changing anything. */
+  private void explainDetectionAtContextRetentionTime() {
+    final RawDataFile rawDataFile = selectedChromatogramRawFile != null ? selectedChromatogramRawFile
+        : visualizer.getSelectedRawDataFile();
+    final double clickedRt = Double.isFinite(contextMenuRetentionTime) ? contextMenuRetentionTime
+        : selectedChromatogramRt;
+    if (rawDataFile == null || !Double.isFinite(clickedRt)) {
+      MZmineCore.getDesktop().displayErrorMessage(
+          "Right-click on the chromatogram to choose a peak first.");
+      return;
+    }
+
+    final PeakDetectionDiagnostic.PeakShape shape = measurePeak(rawDataFile, clickedRt);
+    if (shape == null) {
+      MZmineCore.getDesktop().displayErrorMessage(
+          "No chromatogram points were found near RT %.3f min.".formatted(clickedRt));
+      return;
+    }
+    final String trace = visualizer.getChromPlot().getPlotType() == TICPlotType.BASEPEAK
+        ? "base peak chromatogram" : "TIC";
+    MZmineCore.getDesktop()
+        .displayMessage("Peak detection diagnosis",
+            PeakDetectionDiagnostic.report(rawDataFile, shape, trace));
+  }
+
+  /**
+   * Measures the peak around {@code retentionTime} on the displayed trace by walking outwards from
+   * the apex until the signal stops falling, which is the same idea a resolver uses to find peak
+   * edges.
+   */
+  private PeakDetectionDiagnostic.@Nullable PeakShape measurePeak(RawDataFile rawDataFile,
+      double retentionTime) {
+    final var plot = visualizer.getChromPlot().getXYPlot();
+    for (int datasetIndex = 0; datasetIndex < plot.getDatasetCount(); datasetIndex++) {
+      if (!(plot.getDataset(datasetIndex) instanceof TICDataSet dataset)
+          || !rawDataFile.equals(dataset.getDataFile())) {
+        continue;
+      }
+      final int count = dataset.getItemCount(0);
+      if (count == 0) {
+        continue;
+      }
+
+      int apex = 0;
+      double apexDistance = Double.POSITIVE_INFINITY;
+      double traceMaximum = 0d;
+      for (int item = 0; item < count; item++) {
+        final double distance = Math.abs(dataset.getXValue(0, item) - retentionTime);
+        if (distance < apexDistance) {
+          apexDistance = distance;
+          apex = item;
+        }
+        traceMaximum = Math.max(traceMaximum, dataset.getYValue(0, item));
+      }
+      // Climb to the local maximum so a click on a peak flank still measures the peak.
+      while (apex + 1 < count && dataset.getYValue(0, apex + 1) > dataset.getYValue(0, apex)) {
+        apex++;
+      }
+      while (apex > 0 && dataset.getYValue(0, apex - 1) > dataset.getYValue(0, apex)) {
+        apex--;
+      }
+
+      int left = apex;
+      while (left > 0 && dataset.getYValue(0, left - 1) < dataset.getYValue(0, left)) {
+        left--;
+      }
+      int right = apex;
+      while (right + 1 < count && dataset.getYValue(0, right + 1) < dataset.getYValue(0, right)) {
+        right++;
+      }
+
+      final double apexIntensity = dataset.getYValue(0, apex);
+      final double edge = Math.max(1e-12,
+          Math.max(dataset.getYValue(0, left), dataset.getYValue(0, right)));
+      return new PeakDetectionDiagnostic.PeakShape(dataset.getXValue(0, apex), apexIntensity,
+          right - left + 1, dataset.getXValue(0, right) - dataset.getXValue(0, left),
+          apexIntensity / edge, traceMaximum == 0d ? 0d : apexIntensity / traceMaximum);
+    }
+    return null;
+  }
+
   private NistRowTarget findClosestFeatureRow(RawDataFile rawDataFile, double retentionTime) {
     NistRowTarget closest = null;
     for (FeatureList featureList : ProjectService.getProjectManager().getCurrentProject()
