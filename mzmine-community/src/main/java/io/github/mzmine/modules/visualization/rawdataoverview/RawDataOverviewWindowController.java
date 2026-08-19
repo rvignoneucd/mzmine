@@ -108,10 +108,6 @@ public class RawDataOverviewWindowController {
   private final ObservableMap<RawDataFile, Tab> rawDataFilesAndTabs = FXCollections.observableMap(
       new HashMap<>());
   private final List<RenderedNistMatch> renderedNistMatches = new ArrayList<>();
-  private boolean showNistMatchLabels = false;
-  private int minimumLabelFmf = 0;
-  private int minimumLabelRmf = 0;
-  private int nistLabelFontSize = 13;
   /** How far a feature row may sit from a clicked peak and still receive its NIST hits. */
   private static final double EXPLICIT_SEARCH_RT_TOLERANCE = 0.15d;
   private Label nistLabelFilterStatus;
@@ -149,6 +145,13 @@ public class RawDataOverviewWindowController {
     installChromatogramQuickControls();
     installExplicitNistSearch();
     addChromatogramSelectedScanListener();
+
+    // Reopening a file should look like it did when it was left. setShowNistMatchLabels also syncs
+    // the checkbox and menu item, so this restores the controls as well as the labels. Deferred a
+    // pulse because the chart has not been laid out yet at this point.
+    if (NistChartLabelState.isShowLabels()) {
+      Platform.runLater(() -> setShowNistMatchLabels(true));
+    }
 
     initialized = true;
   }
@@ -431,7 +434,7 @@ public class RawDataOverviewWindowController {
   }
 
   private void setShowNistMatchLabels(boolean visible) {
-      showNistMatchLabels = visible;
+      NistChartLabelState.setShowLabels(visible);
       if (showNistLabelsMenuItem != null && showNistLabelsMenuItem.isSelected() != visible) {
         showNistLabelsMenuItem.setSelected(visible);
       }
@@ -451,7 +454,7 @@ public class RawDataOverviewWindowController {
             : visualizer.getRawDataFiles().stream().findFirst().orElse(null);
       }
       if (visualizer.getChromPlot().getXYPlot().getRangeAxis() instanceof NumberAxis axis) {
-        axis.setUpperMargin(showNistMatchLabels ? 0.40d : 0.05d);
+        axis.setUpperMargin(NistChartLabelState.isShowLabels() ? 0.40d : 0.05d);
         axis.setAutoRange(true);
       }
       refreshNistMatchLabels(nistLabelRawFile, true);
@@ -479,8 +482,8 @@ public class RawDataOverviewWindowController {
   private void installChromatogramQuickControls() {
     final ParameterSet nistParameters = MZmineCore.getConfiguration()
         .getModuleParameters(NistMsSearchModule.class);
-    minimumLabelFmf = nistParameters.getValue(NistMsSearchParameters.MIN_MATCH_FACTOR);
-    minimumLabelRmf = minimumLabelFmf;
+    NistChartLabelState.initialiseFiltersOnce(
+        nistParameters.getValue(NistMsSearchParameters.MIN_MATCH_FACTOR));
 
     showNistLabelsCheckBox = new CheckBox("NIST labels");
     showNistLabelsCheckBox.setTooltip(new Tooltip("Show the best stored NIST match at each RT."));
@@ -498,25 +501,25 @@ public class RawDataOverviewWindowController {
       NistChartLabelState.setDefaultHorizontal(horizontal);
     });
 
-    final Spinner<Integer> fmf = new Spinner<>(0, 999, minimumLabelFmf, 25);
+    final Spinner<Integer> fmf = new Spinner<>(0, 999, NistChartLabelState.getMinimumFmf(), 25);
     fmf.setEditable(true);
     fmf.setPrefWidth(78);
     fmf.setTooltip(new Tooltip(
         "Minimum forward match factor shown on this chart. Type a value and press Enter."));
     installSpinnerCommit(fmf);
     fmf.valueProperty().addListener((obs, old, value) -> {
-      minimumLabelFmf = value;
+      NistChartLabelState.setMinimumFmf(value);
       refreshNistMatchLabels(nistLabelRawFile, true);
     });
 
-    final Spinner<Integer> rmf = new Spinner<>(0, 999, minimumLabelRmf, 25);
+    final Spinner<Integer> rmf = new Spinner<>(0, 999, NistChartLabelState.getMinimumRmf(), 25);
     rmf.setEditable(true);
     rmf.setPrefWidth(78);
     rmf.setTooltip(new Tooltip(
         "Minimum reverse match factor shown on this chart. Type a value and press Enter."));
     installSpinnerCommit(rmf);
     rmf.valueProperty().addListener((obs, old, value) -> {
-      minimumLabelRmf = value;
+      NistChartLabelState.setMinimumRmf(value);
       refreshNistMatchLabels(nistLabelRawFile, true);
     });
 
@@ -539,7 +542,7 @@ public class RawDataOverviewWindowController {
     lineWidth.setPrefWidth(72);
     lineWidth.setTooltip(new Tooltip("Chromatogram line width."));
 
-    final Spinner<Integer> labelSize = new Spinner<>(8, 30, nistLabelFontSize, 1);
+    final Spinner<Integer> labelSize = new Spinner<>(8, 30, NistChartLabelState.getLabelFontSize(), 1);
     labelSize.setEditable(true);
     labelSize.setPrefWidth(68);
     labelSize.setTooltip(new Tooltip("Font size for NIST names and numeric apex labels."));
@@ -549,8 +552,8 @@ public class RawDataOverviewWindowController {
       final java.awt.Color awt = new java.awt.Color((float) fx.getRed(), (float) fx.getGreen(),
           (float) fx.getBlue(), (float) fx.getOpacity());
       visualizer.getChromPlot().setTicLineStyle(awt, lineWidth.getValue());
-      nistLabelFontSize = labelSize.getValue();
-      visualizer.getChromPlot().setTicItemLabelFontSize(nistLabelFontSize);
+      NistChartLabelState.setLabelFontSize(labelSize.getValue());
+      visualizer.getChromPlot().setTicItemLabelFontSize(NistChartLabelState.getLabelFontSize());
       refreshNistMatchLabels(nistLabelRawFile, true);
     };
     lineColor.valueProperty().addListener((obs, old, value) -> applyChartStyle.run());
@@ -612,15 +615,15 @@ public class RawDataOverviewWindowController {
     renderedNistMatches.clear();
     int visibleLabelCount = 0;
 
-    if (showNistMatchLabels && rawDataFile != null) {
+    if (NistChartLabelState.isShowLabels() && rawDataFile != null) {
       final List<LabeledNistPeak> labeledPeaks = NistMatchUtils.findBestMatches(rawDataFile).stream()
           .map(result -> {
             final NistMatchUtils.NistMatch selected = getSelectedNistChartMatch(rawDataFile,
                 result.retentionTime());
             return selected == null ? result : selected;
           })
-          .filter(result -> result.forwardMatchFactor() >= minimumLabelFmf
-              && result.reverseMatchFactor() >= minimumLabelRmf)
+          .filter(result -> result.forwardMatchFactor() >= NistChartLabelState.getMinimumFmf()
+              && result.reverseMatchFactor() >= NistChartLabelState.getMinimumRmf())
           .filter(result -> isNistMatchLabelVisible(rawDataFile, result.retentionTime()))
           .map(result -> new LabeledNistPeak(result,
               findChromatogramPeak(rawDataFile, result.retentionTime()))).toList();
@@ -641,13 +644,13 @@ public class RawDataOverviewWindowController {
         annotation.setTextAnchor(anchor);
         annotation.setRotationAnchor(anchor);
         annotation.setPaint(rawDataFile.getColorAWT());
-        annotation.setFont(new Font(Font.SANS_SERIF, Font.BOLD, nistLabelFontSize));
+        annotation.setFont(new Font(Font.SANS_SERIF, Font.BOLD, NistChartLabelState.getLabelFontSize()));
         plot.addAnnotation(annotation, false);
         renderedNistMatches.add(new RenderedNistMatch(result.retentionTime(), annotation));
       }
     }
     if (nistLabelFilterStatus != null) {
-      nistLabelFilterStatus.setText(showNistMatchLabels ? "NIST: " + visibleLabelCount : "NIST: off");
+      nistLabelFilterStatus.setText(NistChartLabelState.isShowLabels() ? "NIST: " + visibleLabelCount : "NIST: off");
     }
     plot.setNotify(notify);
     if (notify) {
@@ -683,7 +686,7 @@ public class RawDataOverviewWindowController {
   }
 
   private void highlightNistMatch(double retentionTime) {
-    if (!showNistMatchLabels || !Double.isFinite(retentionTime)) {
+    if (!NistChartLabelState.isShowLabels() || !Double.isFinite(retentionTime)) {
       return;
     }
     RenderedNistMatch closest = renderedNistMatches.stream().min(java.util.Comparator.comparingDouble(
@@ -695,7 +698,7 @@ public class RawDataOverviewWindowController {
       final boolean selected = rendered == closest;
       rendered.annotation().setFont(
           new Font(Font.SANS_SERIF, Font.BOLD,
-              selected ? nistLabelFontSize + 3 : nistLabelFontSize));
+              selected ? NistChartLabelState.getLabelFontSize() + 3 : NistChartLabelState.getLabelFontSize()));
       rendered.annotation().setBackgroundPaint(
           selected ? new java.awt.Color(255, 245, 160, 220) : null);
       rendered.annotation().setOutlineVisible(selected);

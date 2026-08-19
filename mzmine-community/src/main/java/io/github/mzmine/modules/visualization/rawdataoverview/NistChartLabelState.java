@@ -38,6 +38,16 @@ public final class NistChartLabelState {
 
   private static boolean defaultHorizontal = false;
 
+  // Chart-wide label settings. These live here rather than on the window controller so they
+  // survive closing and reopening a Raw Data Overview, and so two open windows agree. Previously
+  // they were controller fields, which meant leaving a file and coming back silently reset the
+  // labels to off and the filters to their defaults.
+  private static boolean showLabels = false;
+  private static int minimumFmf = 0;
+  private static int minimumRmf = 0;
+  private static int labelFontSize = 13;
+  private static boolean filtersInitialised = false;
+
   private NistChartLabelState() {
   }
 
@@ -63,6 +73,51 @@ public final class NistChartLabelState {
 
   private static void repaint(@Nullable RawDataFile rawDataFile) {
     forEachController(controller -> controller.repaintNistLabelsFor(rawDataFile));
+  }
+
+  public static boolean isShowLabels() {
+    return showLabels;
+  }
+
+  public static void setShowLabels(boolean visible) {
+    showLabels = visible;
+  }
+
+  public static int getMinimumFmf() {
+    return minimumFmf;
+  }
+
+  public static void setMinimumFmf(int value) {
+    minimumFmf = value;
+  }
+
+  public static int getMinimumRmf() {
+    return minimumRmf;
+  }
+
+  public static void setMinimumRmf(int value) {
+    minimumRmf = value;
+  }
+
+  public static int getLabelFontSize() {
+    return labelFontSize;
+  }
+
+  public static void setLabelFontSize(int size) {
+    labelFontSize = size;
+  }
+
+  /**
+   * Seeds the score filters from the NIST module's minimum match factor, once per session. Doing
+   * it every time a window opens would discard a filter the user had adjusted.
+   */
+  public static void initialiseFiltersOnce(int minimumMatchFactor) {
+    if (filtersInitialised) {
+      return;
+    }
+    filtersInitialised = true;
+    minimumFmf = minimumMatchFactor;
+    minimumRmf = minimumMatchFactor;
   }
 
   public static boolean isDefaultHorizontal() {

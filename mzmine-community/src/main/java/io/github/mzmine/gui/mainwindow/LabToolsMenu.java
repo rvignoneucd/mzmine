@@ -10,7 +10,10 @@ import io.github.mzmine.util.javafx.FxMenuUtil;
 import java.util.List;
 import java.util.logging.Logger;
 import javafx.scene.control.Menu;
+import io.github.mzmine.main.MZmineCore;
 import javafx.scene.control.MenuBar;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -53,11 +56,54 @@ public final class LabToolsMenu {
         .filter(menu -> "Tools".equals(menu.getText())).findFirst().orElse(null);
     if (tools == null) {
       logger.fine("No Tools menu in this workspace; adding the lab tools as a top level menu");
-      menuBar.getMenus().add(FxMenuUtil.addModuleMenuItems(LAB_MENU_TITLE, modules));
+      final Menu standalone = FxMenuUtil.addModuleMenuItems(LAB_MENU_TITLE, modules);
+      addAboutItem(standalone);
+      menuBar.getMenus().add(standalone);
       return menuBar;
     }
 
-    FxMenuUtil.addModuleMenuItems(tools, LAB_MENU_TITLE, modules);
+    addAboutItem(FxMenuUtil.addModuleMenuItems(tools, LAB_MENU_TITLE, modules));
     return menuBar;
+  }
+
+  private static void addAboutItem(Menu labMenu) {
+    labMenu.getItems().add(new SeparatorMenuItem());
+    final MenuItem about = new MenuItem("About these tools");
+    about.setOnAction(event -> MZmineCore.getDesktop()
+        .displayMessage("About " + LAB_MENU_TITLE, aboutText()));
+    labMenu.getItems().add(about);
+  }
+
+  /** Kept here rather than in a resource file so it cannot drift from the code it describes. */
+  static String aboutText() {
+    return """
+        Developed by Robert Vignone, University of California, Davis.
+
+        Additions to mzmine for GC-MS work in this lab.
+
+        Data import
+          - Agilent ChemStation .D/DATA.MS read directly, without converting first
+          - INFICON HAPSITE .hps read directly
+          - Several vendor raw data folders can be selected at once
+
+        NIST identification
+          - Headless MSPepSearch EI search; no NIST window opens, and it works in batch
+          - Searches your own licensed mainlib/replib, which never leave this machine
+          - Optional retry of the raw apex when a deconvoluted spectrum returns nothing
+          - NIST matches tab listing stored hits, with the alternative candidates per peak
+          - Compound labels drawn on the chromatogram, with score filters and orientation
+          - Right-click a peak to search it across every loaded file, creating a feature row
+            where detection did not produce one
+
+        Diagnostics
+          - "Why was this peak not detected?" compares a clicked peak against the settings
+            that actually produced the feature list, and names the threshold that excluded it
+
+        Attribution
+          - ChemStation format decoding is a Java port of rainbow
+            (https://github.com/evanyeyeye/rainbow, LGPL-3.0), used with the permission of its
+            maintainer. See docs/THIRD-PARTY-ATTRIBUTION.md.
+          - NIST MSPepSearch is a free NIST download and is not part of mzmine.
+        """;
   }
 }

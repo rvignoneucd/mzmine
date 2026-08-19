@@ -58,10 +58,23 @@ class LabToolsMenuTest {
     final Menu tools = menuBar.getMenus().getFirst();
     final Menu lab = (Menu) tools.getItems().getFirst();
     for (var item : lab.getItems()) {
+      if (item instanceof javafx.scene.control.SeparatorMenuItem) {
+        continue;
+      }
       assertNotNull(item.getText(), "a lab tool has no label");
       assertFalse(item.getText().isBlank(), "a lab tool has a blank label");
       assertNotNull(item.getOnAction(), "lab tool '" + item.getText() + "' does nothing when clicked");
     }
+  }
+
+  @Test
+  void aboutTextNamesTheAuthorAndTheAttribution() {
+    final String about = LabToolsMenu.aboutText();
+    assertTrue(about.contains("Robert Vignone"), "the about text should credit the author");
+    assertTrue(about.contains("Davis"), "the about text should name the institution");
+    // The rainbow notice is a condition of the permission to ship the ported decoder.
+    assertTrue(about.contains("rainbow"), "the about text should keep the rainbow attribution");
+    assertTrue(about.contains("LGPL-3.0"), "the about text should state rainbow's licence");
   }
 
   @Test
