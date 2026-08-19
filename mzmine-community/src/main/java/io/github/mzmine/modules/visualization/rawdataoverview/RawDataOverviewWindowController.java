@@ -334,9 +334,8 @@ public class RawDataOverviewWindowController {
     }
     final String trace = visualizer.getChromPlot().getPlotType() == TICPlotType.BASEPEAK
         ? "base peak chromatogram" : "TIC";
-    MZmineCore.getDesktop()
-        .displayMessage("Peak detection diagnosis",
-            PeakDetectionDiagnostic.report(rawDataFile, shape, trace));
+    // Deliberately not a modal dialog: the finding is meant to be read while editing the batch.
+    PeakDiagnosisWindow.show(PeakDetectionDiagnostic.report(rawDataFile, shape, trace));
   }
 
   /**
