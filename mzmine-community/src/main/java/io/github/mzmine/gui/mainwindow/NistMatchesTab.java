@@ -400,8 +400,20 @@ public class NistMatchesTab extends Tab {
       candidates.sort(Comparator.comparingInt(NistMatch::matchFactor).reversed());
       final NistMatch previouslySelected = NistChartLabelState.getSelectedMatch(rawDataFile,
           peakRetentionTime);
-      selectedMatch = previouslySelected != null && candidates.contains(previouslySelected)
-          ? previouslySelected : candidates.getFirst();
+      // Match on compound identity, not on record equality. The table rebuilds its NistMatch
+      // records on every refresh, and they carry the raw file the table was filtered to, so a
+      // stored choice made under a different filter would never compare equal - which silently
+      // reverted the user's pick to the top hit each time the table refreshed.
+      selectedMatch = candidates.getFirst();
+      if (previouslySelected != null) {
+        final String wanted = identityKey(previouslySelected);
+        for (NistMatch candidate : candidates) {
+          if (identityKey(candidate).equals(wanted)) {
+            selectedMatch = candidate;
+            break;
+          }
+        }
+      }
     }
 
     private void setSelectedMatch(NistMatch selectedMatch) {

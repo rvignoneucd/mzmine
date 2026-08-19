@@ -137,6 +137,11 @@ public class RawDataOverviewWindowController {
 
   public void initialize() {
 
+    // Register straight away. Registration says "this window shows charts", not "the user just
+    // clicked something", and doing it in event handlers meant a change made in the NIST matches
+    // table repainted nothing until the user happened to click the chart first.
+    NistChartLabelState.register(this);
+
     // Selecting a scan already updates the spectrum below. The automatic filled EIC obscures the
     // raw chromatogram in this overview and can be mistaken for converted source data.
     visualizer.setAutomaticEicOverlayEnabled(false);
@@ -156,7 +161,6 @@ public class RawDataOverviewWindowController {
           visualizer.getChromPlot(),
           local.getX(), local.getY());
       contextMenuRetentionTime = plotPoint == null ? Double.NaN : plotPoint.getX();
-      NistChartLabelState.register(this);
     });
 
     final MenuItem explicitSearch = new MenuItem("Run NIST search at clicked peak apex");
@@ -427,7 +431,6 @@ public class RawDataOverviewWindowController {
   }
 
   private void setShowNistMatchLabels(boolean visible) {
-      NistChartLabelState.register(this);
       showNistMatchLabels = visible;
       if (showNistLabelsMenuItem != null && showNistLabelsMenuItem.isSelected() != visible) {
         showNistLabelsMenuItem.setSelected(visible);
@@ -710,10 +713,17 @@ public class RawDataOverviewWindowController {
    * @param rawDataFile the file whose state changed, or {@code null} for a global change
    */
   void repaintNistLabelsFor(@Nullable RawDataFile rawDataFile) {
-    if (nistLabelRawFile == null || (rawDataFile != null && !rawDataFile.equals(nistLabelRawFile))) {
+    // Labels may not have been drawn yet, in which case there is no remembered file. Fall back to
+    // whatever this window is showing so the first change made from the table still lands.
+    RawDataFile target = nistLabelRawFile;
+    if (target == null) {
+      target = selectedChromatogramRawFile != null ? selectedChromatogramRawFile
+          : visualizer.getSelectedRawDataFile();
+    }
+    if (target == null || (rawDataFile != null && !rawDataFile.equals(target))) {
       return;
     }
-    refreshNistMatchLabels(nistLabelRawFile, true);
+    refreshNistMatchLabels(target, true);
     highlightNistMatch(selectedChromatogramRt);
   }
 
@@ -870,7 +880,6 @@ public class RawDataOverviewWindowController {
   private void addChromatogramSelectedScanListener() {
 
     visualizer.chromPositionProperty().addListener((observable, oldValue, pos) -> {
-      NistChartLabelState.register(this);
       RawDataFile selectedRawDataFile = pos.getDataFile();
       if (selectedRawDataFile == null || selectedRawDataFile instanceof ImagingRawDataFileImpl) {
         return;
