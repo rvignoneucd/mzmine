@@ -9,7 +9,7 @@ import io.github.mzmine.modules.dataprocessing.id_nist.NistMatchUtils;
 import io.github.mzmine.modules.dataprocessing.id_nist.NistMatchUtils.NistMatch;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.WeakHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -29,10 +29,14 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class NistChartLabelState {
 
-  private static final Map<RawDataFile, List<Double>> hiddenRetentionTimes = new HashMap<>();
-  private static final Map<RawDataFile, List<Double>> horizontalRetentionTimes = new HashMap<>();
-  private static final Map<RawDataFile, List<Double>> verticalRetentionTimes = new HashMap<>();
-  private static final Map<RawDataFile, List<SelectedNistMatch>> selectedMatches = new HashMap<>();
+  // Weak keys: a raw file removed from the project must not be pinned here for the lifetime of
+  // the application. Over a session that imports and closes many batches, strong keys would hold
+  // every file and its scan data long after the user had finished with it.
+  private static final Map<RawDataFile, List<Double>> hiddenRetentionTimes = new WeakHashMap<>();
+  private static final Map<RawDataFile, List<Double>> horizontalRetentionTimes = new WeakHashMap<>();
+  private static final Map<RawDataFile, List<Double>> verticalRetentionTimes = new WeakHashMap<>();
+  private static final Map<RawDataFile, List<SelectedNistMatch>> selectedMatches =
+      new WeakHashMap<>();
   private static final List<WeakReference<RawDataOverviewWindowController>> controllers =
       new ArrayList<>();
 

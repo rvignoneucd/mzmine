@@ -83,7 +83,7 @@ public final class PeakDetectionDiagnostic {
     // One entry per distinct setting. A file usually belongs to several feature lists - the
     // chromatograms, the deconvoluted list, an aligned list - and each carries the whole applied
     // method chain, so without this the same thresholds are printed once per list.
-    final Map<String, Object> thresholds = collectThresholds(file);
+    final Map<String, List<Object>> thresholds = collectThresholds(file);
     if (thresholds.isEmpty()) {
       report.append(br).append("No feature detection has been run on this file, so nothing "
           + "excluded this peak - there is simply no feature list yet.").append(br);
@@ -94,10 +94,13 @@ public final class PeakDetectionDiagnostic {
     final Set<String> unjudged = new LinkedHashSet<>();
     report.append(br).append("Settings that produced the existing feature list:").append(br);
 
-    for (Map.Entry<String, Object> threshold : thresholds.entrySet()) {
+    for (Map.Entry<String, List<Object>> threshold : thresholds.entrySet()) {
       final String name = threshold.getKey();
-      final Object value = threshold.getValue();
-      report.append("  %-34s %s".formatted(name, value)).append(br);
+      for (Object each : threshold.getValue()) {
+        report.append("  %-34s %s".formatted(name, each)).append(br);
+      }
+      // Judge against the strictest value in play; that is the one that excluded the peak.
+      final Object value = strictest(name, threshold.getValue());
 
       if (SCAN_COUNT_PARAMETERS.contains(name) && value instanceof Number required
           && peak.scanCount() < required.intValue()) {
@@ -152,8 +155,8 @@ public final class PeakDetectionDiagnostic {
    * <p>Keyed by name and value together, so a setting that genuinely differs between two lists is
    * shown twice while the same setting repeated across lists collapses to one line.</p>
    */
-  private static Map<String, Object> collectThresholds(RawDataFile file) {
-    final Map<String, Object> byNameAndValue = new LinkedHashMap<>();
+  private static Map<String, List<Object>> collectThresholds(RawDataFile file) {
+    final Map<String, List<Object>> thresholds = new LinkedHashMap<>();
     for (FeatureList.FeatureListAppliedMethod step : detectionSteps(file)) {
       final ParameterSet parameters = step.getParameters();
       if (parameters == null) {
@@ -165,11 +168,15 @@ public final class PeakDetectionDiagnostic {
         if (value == null || !isComparable(name)) {
           continue;
         }
-        byNameAndValue.putIfAbsent(name + " " + value, value);
+        final List<Object> values = thresholds.computeIfAbsent(name, ignored -> new ArrayList<>());
+        // Distinct values only. The same step repeated across feature lists collapses, while a
+        // setting that genuinely differs between two lists is kept so the user sees both.
+        if (values.stream().noneMatch(existing -> String.valueOf(existing).equals(
+            String.valueOf(value)))) {
+          values.add(value);
+        }
       }
     }
-    final Map<String, Object> thresholds = new LinkedHashMap<>();
-    byNameAndValue.forEach((key, value) -> thresholds.put(key.split(" ")[0], value));
     return thresholds;
   }
 
@@ -210,6 +217,21 @@ public final class PeakDetectionDiagnostic {
       }
     }
     return steps;
+  }
+
+  /** The value most likely to have excluded a peak when a setting differs between lists. */
+  private static Object strictest(String name, List<Object> values) {
+    if (values.size() == 1) {
+      return values.getFirst();
+    }
+    if (SCAN_COUNT_PARAMETERS.contains(name) || RATIO_PARAMETERS.contains(name)
+        || ABSOLUTE_INTENSITY_PARAMETERS.contains(name)) {
+      // Higher is stricter for a minimum.
+      return values.stream().filter(Number.class::isInstance).map(Number.class::cast)
+          .max(java.util.Comparator.comparingDouble(Number::doubleValue))
+          .map(Object.class::cast).orElse(values.getFirst());
+    }
+    return values.getFirst();
   }
 
   private static @Nullable Double asDouble(@Nullable Object value) {

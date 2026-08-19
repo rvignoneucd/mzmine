@@ -201,13 +201,14 @@ public class RawDataOverviewWindowController {
 
     // A clicked peak is a question about a retention time, so every loaded file is searched at
     // that time, and a row is created for any file that has none there.
+    final List<String> outOfRange = new ArrayList<>();
     final List<ClickedPeakNistTargets.Target> targets = ClickedPeakNistTargets.resolve(
-        requestedRetentionTime, EXPLICIT_SEARCH_RT_TOLERANCE);
+        requestedRetentionTime, EXPLICIT_SEARCH_RT_TOLERANCE, outOfRange);
     if (targets.isEmpty()) {
       logger.warning(() -> "Explicit NIST request found nowhere to store hits at RT %.3f"
           .formatted(requestedRetentionTime));
       MZmineCore.getDesktop().displayErrorMessage(
-          explainMissingFeatureRow(rawDataFile, requestedRetentionTime));
+          explainMissingFeatureRow(rawDataFile, requestedRetentionTime, outOfRange));
       return;
     }
 
@@ -239,12 +240,16 @@ public class RawDataOverviewWindowController {
       final NistMsSearchTask task = new NistMsSearchTask(target.row(), target.featureList(),
           parameters, Instant.now(), target.scan());
       task.addTaskStatusListener((changedTask, newStatus, oldStatus) -> {
-        if (newStatus != TaskStatus.FINISHED && newStatus != TaskStatus.ERROR) {
+        // Any terminal status completes this file. Counting only FINISHED and ERROR left the
+        // run permanently unfinished when a task was cancelled, so the summary and the label
+        // refresh never happened and the hits already stored stayed invisible.
+        if (newStatus != TaskStatus.FINISHED && newStatus != TaskStatus.ERROR
+            && newStatus != TaskStatus.CANCELED) {
           return;
         }
         if (newStatus == TaskStatus.ERROR) {
           failures.add(target.file().getName() + ": " + changedTask.getErrorMessage());
-        } else {
+        } else if (newStatus == TaskStatus.FINISHED) {
           totalHits.addAndGet(task.getAddedHitCount());
         }
         if (remaining.decrementAndGet() > 0) {
@@ -290,7 +295,8 @@ public class RawDataOverviewWindowController {
    * within 0.15 min" reads as a tolerance problem even when the real answer is that feature
    * detection has not been run.</p>
    */
-  private String explainMissingFeatureRow(RawDataFile rawDataFile, double retentionTime) {
+  private String explainMissingFeatureRow(RawDataFile rawDataFile, double retentionTime,
+      List<String> outOfRange) {
     final var featureLists = ProjectService.getProjectManager().getCurrentProject()
         .getCurrentFeatureLists();
     if (featureLists.isEmpty()) {
@@ -299,9 +305,15 @@ public class RawDataOverviewWindowController {
 
           Run feature detection first. For GC-EI data that usually means mass detection, then           chromatogram building, then deconvolution. You can then right-click a peak again.""";
     }
-    return ("No loaded raw file has a scan near RT %.3f, so there is nothing to search.%n%n"
-        + "This usually means the chromatogram on screen covers a different time range than the "
-        + "loaded data for %s.").formatted(retentionTime, rawDataFile.getName());
+    if (!outOfRange.isEmpty()) {
+      return ("No loaded raw file has a scan within %.2f min of RT %.3f, so there is nothing to "
+          + "search.%n%nOut of range: %s").formatted(EXPLICIT_SEARCH_RT_TOLERANCE, retentionTime,
+          String.join(", ", outOfRange));
+    }
+    // Scans were found, so the failure was in building somewhere to store the hits.
+    return ("Scans were found near RT %.3f, but no feature row could be created to hold NIST hits "
+        + "for any file.%n%nSee the mzmine log for the reason each file was skipped.").formatted(
+        retentionTime);
   }
 
   /**

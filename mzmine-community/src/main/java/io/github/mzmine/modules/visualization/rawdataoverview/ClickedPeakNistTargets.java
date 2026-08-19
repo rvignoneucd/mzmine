@@ -64,12 +64,27 @@ public final class ClickedPeakNistTargets {
    * skipped, since there is nothing to search
    */
   public static @NotNull List<Target> resolve(double retentionTime, double rtTolerance) {
+    return resolve(retentionTime, rtTolerance, new ArrayList<>());
+  }
+
+  /**
+   * As {@link #resolve(double, double)}, additionally collecting the names of files skipped because
+   * their run does not cover the retention time, so the caller can say so rather than reporting a
+   * generic failure.
+   */
+  public static @NotNull List<Target> resolve(double retentionTime, double rtTolerance,
+      @NotNull List<String> skippedForDistance) {
     final List<Target> targets = new ArrayList<>();
     for (RawDataFile file : ProjectService.getProjectManager().getCurrentProject()
         .getCurrentRawDataFiles()) {
+      // binarySearchClosestScan returns the nearest scan whatever the distance, so a file whose
+      // run never reached this time would otherwise be searched at its last scan and the hits
+      // filed under a retention time it never measured.
       final Scan scan = file.binarySearchClosestScan((float) retentionTime, 1);
-      if (scan == null) {
-        logger.fine(() -> "No scan near RT %.3f in %s".formatted(retentionTime, file.getName()));
+      if (scan == null || Math.abs(scan.getRetentionTime() - retentionTime) > rtTolerance) {
+        logger.fine(() -> "%s has no scan within %.3f min of RT %.3f".formatted(file.getName(),
+            rtTolerance, retentionTime));
+        skippedForDistance.add(file.getName());
         continue;
       }
 
