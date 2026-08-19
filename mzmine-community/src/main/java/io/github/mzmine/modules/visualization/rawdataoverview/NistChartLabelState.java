@@ -203,6 +203,32 @@ public final class NistChartLabelState {
     repaint(rawDataFile);
   }
 
+  /**
+   * Forgets every stored setting for one peak: hidden, orientation and chosen candidate.
+   *
+   * <p>Used when a peak's hits are deleted. Leaving the state behind would mean a later search at
+   * the same retention time silently inherited a hidden label or a candidate that no longer
+   * exists, which is exactly the sort of thing that makes debugging a detection problem harder.</p>
+   */
+  public static void clearPeak(@Nullable RawDataFile rawDataFile, double retentionTime) {
+    if (rawDataFile == null) {
+      return;
+    }
+    for (Map<RawDataFile, List<Double>> store : List.of(hiddenRetentionTimes,
+        horizontalRetentionTimes, verticalRetentionTimes)) {
+      final List<Double> stored = store.get(rawDataFile);
+      if (stored != null) {
+        stored.removeIf(rt -> NistMatchUtils.isSameChartPeakRetentionTime(rt, retentionTime));
+      }
+    }
+    final List<SelectedNistMatch> selections = selectedMatches.get(rawDataFile);
+    if (selections != null) {
+      selections.removeIf(selected -> NistMatchUtils.isSameChartPeakRetentionTime(
+          selected.retentionTime(), retentionTime));
+    }
+    repaint(rawDataFile);
+  }
+
   private static boolean matchesStoredRetentionTime(Map<RawDataFile, List<Double>> store,
       RawDataFile rawDataFile, double retentionTime) {
     return store.getOrDefault(rawDataFile, List.of()).stream()

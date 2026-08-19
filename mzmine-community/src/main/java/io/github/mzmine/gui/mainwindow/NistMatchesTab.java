@@ -4,7 +4,11 @@
  */
 package io.github.mzmine.gui.mainwindow;
 
+import io.github.mzmine.datamodel.FeatureStatus;
 import io.github.mzmine.datamodel.RawDataFile;
+import io.github.mzmine.datamodel.features.FeatureList;
+import io.github.mzmine.datamodel.features.FeatureListRow;
+import io.github.mzmine.project.ProjectService;
 import io.github.mzmine.javafx.concurrent.threading.FxThread;
 import io.github.mzmine.datamodel.features.FeatureListRow;
 import io.github.mzmine.main.MZmineCore;
@@ -30,6 +34,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.RadioMenuItem;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TableCell;
@@ -53,6 +58,9 @@ import org.jetbrains.annotations.Nullable;
  * charts, so a change made in this table repaints every open chart showing that file.</p>
  */
 public class NistMatchesTab extends Tab {
+
+  private static final java.util.logging.Logger logger = java.util.logging.Logger.getLogger(
+      NistMatchesTab.class.getName());
 
   private static @Nullable NistMatchesTab instance;
 
@@ -188,12 +196,16 @@ public class NistMatchesTab extends Tab {
     vertical.setOnAction(event -> setSelectedNistLabelHorizontal(false));
     horizontal.setOnAction(event -> setSelectedNistLabelHorizontal(true));
 
-    final ContextMenu menu = new ContextMenu(vertical, horizontal);
+    final MenuItem remove = new MenuItem("Remove NIST hits for this peak");
+    remove.setOnAction(event -> removeSelectedPeakHits());
+
+    final ContextMenu menu = new ContextMenu(vertical, horizontal, new SeparatorMenuItem(), remove);
     menu.setOnShowing(event -> {
       final NistMatchSummary selected = nistMatchesTable.getSelectionModel().getSelectedItem();
       final boolean disabled = selected == null;
       vertical.setDisable(disabled);
       horizontal.setDisable(disabled);
+      remove.setDisable(disabled);
       if (!disabled && NistChartLabelState.isLabelHorizontal(
           selected.rawDataFile(), selected.retentionTime())) {
         horizontal.setSelected(true);
@@ -202,6 +214,57 @@ public class NistMatchesTab extends Tab {
       }
     });
     nistMatchesTable.setContextMenu(menu);
+  }
+
+  /**
+   * Deletes the NIST hits stored for the selected peak, and the row itself when this build created
+   * it. Intended for rechecking whether ordinary processing finds a peak on its own, so it has to
+   * leave no trace: stored hits, the manual row and the peak's label state all go.
+   */
+  private void removeSelectedPeakHits() {
+    final NistMatchSummary selected = nistMatchesTable.getSelectionModel().getSelectedItem();
+    if (selected == null) {
+      return;
+    }
+    final RawDataFile file = selected.rawDataFile();
+    final double retentionTime = selected.retentionTime();
+
+    int removedHits = 0;
+    int removedRows = 0;
+    for (NistMatch candidate : selected.candidates()) {
+      final FeatureListRow row = candidate.row();
+      final List<SpectralDBAnnotation> keep = row.getSpectralLibraryMatches().stream()
+          .filter(annotation -> !NistMatchUtils.isNistMatch(annotation)).toList();
+      removedHits += row.getSpectralLibraryMatches().size() - keep.size();
+      row.setSpectralLibraryMatch(keep);
+
+      // Only rows this build created are removed. A row produced by feature detection belongs to
+      // the user's processing and must survive having an annotation deleted.
+      if (keep.isEmpty() && wasCreatedManually(row, file)) {
+        for (FeatureList featureList : ProjectService.getProjectManager().getCurrentProject()
+            .getCurrentFeatureLists()) {
+          if (featureList.getRows().contains(row)) {
+            featureList.removeRow(row);
+            removedRows++;
+            break;
+          }
+        }
+      }
+    }
+
+    NistChartLabelState.clearPeak(file, retentionTime);
+    refreshNistMatches();
+    logger.info("Removed %d NIST hit(s) and %d manually created row(s) at RT %.3f in %s".formatted(
+        removedHits, removedRows, retentionTime, file == null ? "?" : file.getName()));
+  }
+
+  /** True when the row's feature for this file was created by the clicked-peak search. */
+  private static boolean wasCreatedManually(FeatureListRow row, @Nullable RawDataFile file) {
+    if (file == null) {
+      return false;
+    }
+    final var feature = row.getFeature(file);
+    return feature != null && feature.getFeatureStatus() == FeatureStatus.MANUAL;
   }
 
   private void setSelectedNistLabelHorizontal(boolean horizontal) {
