@@ -11,7 +11,11 @@ import io.github.mzmine.parameters.Parameter;
 import io.github.mzmine.parameters.ParameterSet;
 import io.github.mzmine.project.ProjectService;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -65,28 +69,92 @@ public final class PeakDetectionDiagnostic {
    */
   public static @NotNull String report(@NotNull RawDataFile file, @NotNull PeakShape peak,
       @NotNull String traceDescription) {
+    final String br = System.lineSeparator();
     final StringBuilder report = new StringBuilder();
-    report.append("Peak at RT %.3f min in %s%n%n".formatted(peak.apexRetentionTime(),
-        file.getName()));
-    report.append("Measured from the %s:%n".formatted(traceDescription));
-    report.append("  width          %d scans%n".formatted(peak.scanCount()));
-    report.append("  duration       %.3f min%n".formatted(peak.durationMinutes()));
-    report.append("  top/edge ratio %.2f%n".formatted(peak.topToEdgeRatio()));
-    report.append("  height         %.3g (%.1f%% of the largest point on this trace)%n".formatted(
-        peak.apexIntensity(), peak.relativeHeight() * 100d));
+    report.append("Peak at RT %.3f min in %s".formatted(peak.apexRetentionTime(), file.getName()))
+        .append(br).append(br);
+    report.append("Measured from the ").append(traceDescription).append(':').append(br);
+    report.append("  width          %d scans".formatted(peak.scanCount())).append(br);
+    report.append("  duration       %.3f min".formatted(peak.durationMinutes())).append(br);
+    report.append("  top/edge ratio %.2f".formatted(peak.topToEdgeRatio())).append(br);
+    report.append("  height         %.3g (%.1f%% of the largest point on this trace)".formatted(
+        peak.apexIntensity(), peak.relativeHeight() * 100d)).append(br);
 
-    final List<FeatureList.FeatureListAppliedMethod> steps = detectionSteps(file);
-    if (steps.isEmpty()) {
-      report.append("%nNo feature detection has been run on this file, so nothing excluded this "
-          + "peak - there is simply no feature list yet.".formatted());
+    // One entry per distinct setting. A file usually belongs to several feature lists - the
+    // chromatograms, the deconvoluted list, an aligned list - and each carries the whole applied
+    // method chain, so without this the same thresholds are printed once per list.
+    final Map<String, Object> thresholds = collectThresholds(file);
+    if (thresholds.isEmpty()) {
+      report.append(br).append("No feature detection has been run on this file, so nothing "
+          + "excluded this peak - there is simply no feature list yet.").append(br);
       return report.toString();
     }
 
-    final List<String> blocking = new ArrayList<>();
-    final List<String> unjudged = new ArrayList<>();
-    report.append("%nSettings that produced the existing feature list:%n".formatted());
+    final Set<String> blocking = new LinkedHashSet<>();
+    final Set<String> unjudged = new LinkedHashSet<>();
+    report.append(br).append("Settings that produced the existing feature list:").append(br);
 
-    for (FeatureList.FeatureListAppliedMethod step : steps) {
+    for (Map.Entry<String, Object> threshold : thresholds.entrySet()) {
+      final String name = threshold.getKey();
+      final Object value = threshold.getValue();
+      report.append("  %-34s %s".formatted(name, value)).append(br);
+
+      if (SCAN_COUNT_PARAMETERS.contains(name) && value instanceof Number required
+          && peak.scanCount() < required.intValue()) {
+        blocking.add("%s is %s but this peak is only %d scans wide.".formatted(name, required,
+            peak.scanCount()));
+      } else if (DURATION_PARAMETERS.contains(name) && value instanceof Range<?> range) {
+        final Double lower = asDouble(range.hasLowerBound() ? range.lowerEndpoint() : null);
+        final Double upper = asDouble(range.hasUpperBound() ? range.upperEndpoint() : null);
+        if (lower != null && peak.durationMinutes() < lower) {
+          blocking.add("%s starts at %.3f min but this peak lasts %.3f min.".formatted(name, lower,
+              peak.durationMinutes()));
+        } else if (upper != null && peak.durationMinutes() > upper) {
+          blocking.add("%s ends at %.3f min but this peak lasts %.3f min.".formatted(name, upper,
+              peak.durationMinutes()));
+        }
+      } else if (RATIO_PARAMETERS.contains(name) && value instanceof Number required
+          && peak.topToEdgeRatio() < required.doubleValue()) {
+        blocking.add(("%s is %s but this peak only reaches %.2f, so it sits on a high baseline or "
+            + "overlaps a neighbour.").formatted(name, required, peak.topToEdgeRatio()));
+      } else if (ABSOLUTE_INTENSITY_PARAMETERS.contains(name) && value instanceof Number required) {
+        unjudged.add("%s (%s)".formatted(name, required));
+      }
+    }
+
+    report.append(br);
+    if (blocking.isEmpty()) {
+      report.append("Nothing in the comparable settings excludes this peak.").append(br);
+      report.append("That points at an absolute intensity threshold, or at the peak being absent "
+          + "from the extracted ion chromatograms rather than from the trace shown here.").append(br);
+    } else {
+      report.append("This peak fails:").append(br);
+      for (String reason : blocking) {
+        report.append("  - ").append(reason).append(br);
+      }
+      report.append(br);
+      report.append("Change the setting in your batch and run detection again. Relaxing a "
+          + "threshold applies to every peak in every file, not just this one.").append(br);
+    }
+
+    if (!unjudged.isEmpty()) {
+      report.append(br);
+      report.append("Not judged, because these apply to extracted ion chromatograms while the "
+          + "measurement above comes from the displayed trace:").append(br);
+      report.append("  ").append(String.join(", ", unjudged)).append(br);
+    }
+    return report.toString();
+  }
+
+  /**
+   * Every distinct threshold that shaped this file's feature lists.
+   *
+   * <p>Keyed by name and value together, so a setting that genuinely differs between two lists is
+   * shown twice while the same setting repeated across lists collapses to one line.</p>
+   */
+  private static Map<String, Object> collectThresholds(RawDataFile file) {
+    final Map<String, Object> byNameAndValue = new LinkedHashMap<>();
+    for (FeatureList.FeatureListAppliedMethod step : detectionSteps(file)) {
       final ParameterSet parameters = step.getParameters();
       if (parameters == null) {
         continue;
@@ -94,59 +162,20 @@ public final class PeakDetectionDiagnostic {
       for (Parameter<?> parameter : parameters.getParameters()) {
         final String name = parameter.getName();
         final Object value = parameter.getValue();
-        if (value == null) {
+        if (value == null || !isComparable(name)) {
           continue;
         }
-        if (SCAN_COUNT_PARAMETERS.contains(name) && value instanceof Number required) {
-          report.append("  %-34s %s%n".formatted(name, required));
-          if (peak.scanCount() < required.intValue()) {
-            blocking.add("%s is %s but this peak is only %d scans wide. It would need to be at most %d."
-                .formatted(name, required, peak.scanCount(), peak.scanCount()));
-          }
-        } else if (DURATION_PARAMETERS.contains(name) && value instanceof Range<?> range) {
-          report.append("  %-34s %s%n".formatted(name, range));
-          final Double lower = asDouble(range.hasLowerBound() ? range.lowerEndpoint() : null);
-          final Double upper = asDouble(range.hasUpperBound() ? range.upperEndpoint() : null);
-          if (lower != null && peak.durationMinutes() < lower) {
-            blocking.add("%s starts at %.3f min but this peak lasts %.3f min.".formatted(name,
-                lower, peak.durationMinutes()));
-          } else if (upper != null && peak.durationMinutes() > upper) {
-            blocking.add("%s ends at %.3f min but this peak lasts %.3f min.".formatted(name, upper,
-                peak.durationMinutes()));
-          }
-        } else if (RATIO_PARAMETERS.contains(name) && value instanceof Number required) {
-          report.append("  %-34s %s%n".formatted(name, required));
-          if (peak.topToEdgeRatio() < required.doubleValue()) {
-            blocking.add("%s is %s but this peak only reaches %.2f. It sits on a high baseline or overlaps a neighbour."
-                .formatted(name, required, peak.topToEdgeRatio()));
-          }
-        } else if (ABSOLUTE_INTENSITY_PARAMETERS.contains(name) && value instanceof Number required) {
-          report.append("  %-34s %s%n".formatted(name, required));
-          unjudged.add("%s (%s)".formatted(name, required));
-        }
+        byNameAndValue.putIfAbsent(name + " " + value, value);
       }
     }
+    final Map<String, Object> thresholds = new LinkedHashMap<>();
+    byNameAndValue.forEach((key, value) -> thresholds.put(key.split(" ")[0], value));
+    return thresholds;
+  }
 
-    if (blocking.isEmpty()) {
-      report.append("%nNothing in the comparable settings excludes this peak.%n".formatted());
-      report.append("That points at an absolute intensity threshold, or at the peak being absent "
-          + "from the extracted ion chromatograms rather than from the trace shown here.%n".formatted());
-    } else {
-      report.append("%nThis peak fails:%n".formatted());
-      for (String reason : blocking) {
-        report.append("  - ").append(reason).append(System.lineSeparator());
-      }
-      report.append("%nChange the setting in your batch and run detection again. Note that "
-          + "relaxing a threshold applies to every peak in every file, not just this one.%n"
-          .formatted());
-    }
-
-    if (!unjudged.isEmpty()) {
-      report.append("%nNot judged, because these apply to extracted ion chromatograms and the "
-          + "measurement above is from the displayed trace:%n  ".formatted());
-      report.append(String.join(", ", unjudged)).append(System.lineSeparator());
-    }
-    return report.toString();
+  private static boolean isComparable(String name) {
+    return SCAN_COUNT_PARAMETERS.contains(name) || DURATION_PARAMETERS.contains(name)
+        || RATIO_PARAMETERS.contains(name) || ABSOLUTE_INTENSITY_PARAMETERS.contains(name);
   }
 
   /** Detection and deconvolution steps recorded on feature lists covering this file. */
