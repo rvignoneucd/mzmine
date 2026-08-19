@@ -9,6 +9,7 @@ import io.github.mzmine.datamodel.RawDataFile;
 import io.github.mzmine.datamodel.features.FeatureList;
 import io.github.mzmine.parameters.Parameter;
 import io.github.mzmine.parameters.ParameterSet;
+import io.github.mzmine.parameters.parametertypes.selectors.ScanSelection;
 import io.github.mzmine.project.ProjectService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -79,6 +80,22 @@ public final class PeakDetectionDiagnostic {
     report.append("  top/edge ratio %.2f".formatted(peak.topToEdgeRatio())).append(br);
     report.append("  height         %.3g (%.1f%% of the largest point on this trace)".formatted(
         peak.apexIntensity(), peak.relativeHeight() * 100d)).append(br);
+
+    // A retention time restriction is checked first and reported on its own. It explains an entire
+    // missing region of the chromatogram rather than one peak, so comparing peak shape against
+    // thresholds afterwards would only distract from the real cause.
+    final List<String> excludedBy = retentionTimeRestrictions(file, peak.apexRetentionTime());
+    if (!excludedBy.isEmpty()) {
+      report.append(br).append("This peak is outside the retention time range that processing "
+          + "was told to look at:").append(br);
+      for (String restriction : excludedBy) {
+        report.append("  - ").append(restriction).append(br);
+      }
+      report.append(br).append("Every scan outside that range is dropped before feature detection "
+          + "runs, so no threshold is involved and no peak beyond it can ever be found.").append(br);
+      report.append("Widen the scan filter in that step and run the batch again.").append(br);
+      return report.toString();
+    }
 
     // One entry per distinct setting. A file usually belongs to several feature lists - the
     // chromatograms, the deconvoluted list, an aligned list - and each carries the whole applied
@@ -178,6 +195,55 @@ public final class PeakDetectionDiagnostic {
       }
     }
     return thresholds;
+  }
+
+  /**
+   * Scan selections whose retention time range excludes {@code retentionTime}.
+   *
+   * <p>This is the cause that looks least like a threshold problem and is the easiest to overlook:
+   * the peak is plainly visible in the raw data, every threshold looks reasonable, and yet the
+   * feature table simply stops at some time. Scans outside the range never reach detection at
+   * all.</p>
+   */
+  private static List<String> retentionTimeRestrictions(RawDataFile file, double retentionTime) {
+    final List<String> restrictions = new ArrayList<>();
+    for (FeatureList.FeatureListAppliedMethod step : allSteps(file)) {
+      final ParameterSet parameters = step.getParameters();
+      if (parameters == null) {
+        continue;
+      }
+      for (Parameter<?> parameter : parameters.getParameters()) {
+        if (!(parameter.getValue() instanceof ScanSelection selection)) {
+          continue;
+        }
+        final Range<Double> range = selection.getScanRTRange();
+        if (range == null || range.contains(retentionTime)) {
+          continue;
+        }
+        final String description = "%s in %s is set to %s, and this peak is at %.3f min".formatted(
+            parameter.getName(), step.getModule().getName(), range, retentionTime);
+        if (!restrictions.contains(description)) {
+          restrictions.add(description);
+        }
+      }
+    }
+    return restrictions;
+  }
+
+  /** Every applied method on feature lists covering this file, whatever parameters it holds. */
+  private static List<FeatureList.FeatureListAppliedMethod> allSteps(RawDataFile file) {
+    final List<FeatureList.FeatureListAppliedMethod> steps = new ArrayList<>();
+    final var projectManager = ProjectService.getProjectManager();
+    final var project = projectManager == null ? null : projectManager.getCurrentProject();
+    if (project == null) {
+      return steps;
+    }
+    for (FeatureList featureList : project.getCurrentFeatureLists()) {
+      if (featureList.getRawDataFiles().contains(file)) {
+        steps.addAll(featureList.getAppliedMethods());
+      }
+    }
+    return steps;
   }
 
   private static boolean isComparable(String name) {
